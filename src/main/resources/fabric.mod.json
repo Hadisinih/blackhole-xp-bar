@@ -6,6 +6,7 @@
   "description": "XP bar jadi aliran materi yang tersedot ke black hole. Warna berubah tiap naik level, ada efek serap orb dan efek naik level.",
   "authors": ["HadzZz"],
   "license": "MIT",
+  "icon": "icon.png",
   "environment": "client",
   "entrypoints": {
     "client": ["dev.blackholexp.BlackHoleXpClient"]
