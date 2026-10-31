@@ -41,8 +41,13 @@ public class BlackHoleXpClient implements ClientModInitializer {
     private static final int[] ORB = {184, 240, 58};
     private static final int MAX_LEVEL_COLOR = 100;
 
-    private static final int BAR_W = 182;
-    private static final int BAR_H = 5;
+    private static final int[] WHITE = {255, 255, 255};
+
+    private static final int SEGS = 11;
+    private static final int SEG_W = 12;
+    private static final int SEG_GAP = 3;
+    private static final int BAR_H = 7;
+    private static final int HOLE_DX = 194;
 
     private static final Random RNG = new Random();
     private static final List<Particle> PARTICLES = new ArrayList<>();
@@ -75,8 +80,9 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
         int x0 = sw / 2 - 91;
         int y0 = sh - 32 + 3;
-        int cx = x0 + BAR_W + 12;
-        int cy = y0 - 3;
+        int barTop = y0 - 1;
+        int cx = x0 + HOLE_DX;
+        int cy = barTop + BAR_H / 2;
 
         int level = player.experienceLevel;
         float progress = player.experienceProgress;
@@ -86,7 +92,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
         int[] main = lerp(PURPLE, ORANGE, lt);
         int[] light = lerp(main, new int[]{255, 255, 255}, 0.45f);
 
-        drawBar(ctx, x0, y0, progress, main, now);
+        drawBar(ctx, x0, barTop, progress, main, now);
         drawDisk(ctx, cx, cy, main, light, now, false);
         drawCore(ctx, cx, cy, light, now);
         drawDisk(ctx, cx, cy, main, light, now, true);
@@ -96,7 +102,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
         if (level > 0) {
             boolean popping = now - levelUpAt < 450;
             int[] c = popping ? new int[]{255, 255, 255} : main;
-            ctx.drawCenteredTextWithShadow(mc.textRenderer, String.valueOf(level), sw / 2, sh - 35, argb(255, c));
+            ctx.drawCenteredTextWithShadow(mc.textRenderer, String.valueOf(level), sw / 2, sh - 40, argb(255, c));
         }
     }
 
@@ -136,20 +142,31 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
     }
 
-    private static void drawBar(DrawContext ctx, int x0, int y0, float progress, int[] main, long now) {
-        ctx.fill(x0 - 1, y0 - 1, x0 + BAR_W + 1, y0 + BAR_H + 1, 0xFF3A2F66);
-        ctx.fill(x0, y0, x0 + BAR_W, y0 + BAR_H, 0xFF14101F);
-
-        int fw = Math.max(0, Math.min(BAR_W, (int) (progress * (BAR_W + 1))));
+    private static void drawBar(DrawContext ctx, int x0, int top, float progress, int[] main, long now) {
+        float pos = Math.max(0f, Math.min(1f, progress)) * SEGS;
+        int full = (int) pos;
+        float frac = pos - full;
         float shift = (now % 900L) / 900f * 12f;
-        for (int i = 0; i < fw; i++) {
-            float t = i / (float) (BAR_W - 1);
-            int h = 5 - (int) (t * 3.0f);
-            int top = y0 + (BAR_H - h) / 2;
-            float wave = ((i - shift) % 12f + 12f) % 12f;
-            int[] c = lerp(DEEP, main, t);
-            if (wave < 2f) c = lerp(c, new int[]{255, 255, 255}, 0.28f);
-            ctx.fill(x0 + i, top, x0 + i + 1, top + h, argb(255, c));
+
+        for (int i = 0; i < SEGS; i++) {
+            int sx = x0 + i * (SEG_W + SEG_GAP);
+            float t = i / (float) (SEGS - 1);
+            int h = BAR_H - Math.round(t * 4f);
+            int fy = top + (BAR_H - h) / 2;
+            boolean filled = i < full;
+
+            if (!filled) {
+                ctx.fill(sx - 1, top - 1, sx + SEG_W + 1, top + BAR_H + 1, 0xFF3A2F66);
+                ctx.fill(sx, top, sx + SEG_W, top + BAR_H, 0xFF000000);
+            }
+
+            int fillW = filled ? SEG_W : (i == full ? Math.round(frac * SEG_W) : 0);
+            for (int c = 0; c < fillW; c++) {
+                float wave = ((sx + c - shift) % 12f + 12f) % 12f;
+                int[] col = lerp(DEEP, main, t);
+                if (wave < 2f) col = lerp(col, WHITE, 0.28f);
+                ctx.fill(sx + c, fy, sx + c + 1, fy + h, argb(255, col));
+            }
         }
     }
 
@@ -157,22 +174,26 @@ public class BlackHoleXpClient implements ClientModInitializer {
         double tilt = Math.toRadians(-12);
         double ct = Math.cos(tilt), st = Math.sin(tilt);
         double spin = now * 0.004;
-        for (int ring = 0; ring < 2; ring++) {
-            double rx = ring == 0 ? 17 : 12;
-            double ry = ring == 0 ? 4.2 : 3.0;
-            int n = ring == 0 ? 56 : 40;
-            for (int k = 0; k < n; k++) {
-                double a = k * Math.PI * 2 / n;
-                double ey = Math.sin(a) * ry;
+        double[] rxs = {19, 14.5, 10.5};
+        double[] rys = {5.2, 3.9, 2.8};
+        int[] ns = {84, 64, 48};
+        double[] speeds = {1.0, -1.5, 2.2};
+        for (int ring = 0; ring < 3; ring++) {
+            for (int k = 0; k < ns[ring]; k++) {
+                double a = k * Math.PI * 2 / ns[ring];
+                double ey = Math.sin(a) * rys[ring];
                 boolean isFront = ey >= 0;
                 if (isFront != front) continue;
-                double ex = Math.cos(a) * rx;
+                double ex = Math.cos(a) * rxs[ring];
                 int px = cx + (int) Math.round(ex * ct - ey * st);
                 int py = cy + (int) Math.round(ex * st + ey * ct);
-                double glow = 0.5 + 0.5 * Math.cos(a - spin * (ring == 0 ? 1.0 : -1.4));
-                int[] c = lerp(main, light, (float) glow);
-                int size = glow > 0.7 ? 2 : 1;
-                ctx.fill(px, py, px + size, py + size, argb(ring == 0 ? 255 : 200, c));
+                double g = 0.5 + 0.5 * Math.cos(a - spin * speeds[ring]);
+                double glow = g * g * g;
+                double m = 0.25 + 0.75 * glow;
+                int[] c = lerp(main, light, (float) m);
+                if (ring == 2) c = lerp(c, WHITE, (float) (0.55 * glow));
+                int size = glow > 0.5 ? 2 : 1;
+                ctx.fill(px, py, px + size, py + size, argb(ring == 1 ? 225 : 255, c));
             }
         }
     }
@@ -180,14 +201,24 @@ public class BlackHoleXpClient implements ClientModInitializer {
     private static void drawCore(DrawContext ctx, int cx, int cy, int[] light, long now) {
         pulse *= 0.94f;
         double breathe = 0.5 + 0.5 * Math.sin(now / 318.0);
-        double ringR = 8.0 + breathe * 0.8 + pulse * 2.5;
-        int a = (int) Math.min(255, 150 + breathe * 60);
-        int pts = 44;
+        double ringR = 8.0 + breathe * 0.6 + pulse * 2.5;
+        int a = (int) Math.min(255, 170 + breathe * 80);
+        int pts = 56;
         for (int k = 0; k < pts; k++) {
             double ang = k * Math.PI * 2 / pts;
             int px = cx + (int) Math.round(Math.cos(ang) * ringR);
             int py = cy + (int) Math.round(Math.sin(ang) * ringR);
-            ctx.fill(px, py, px + 1, py + 1, argb(a, light));
+            ctx.fill(px, py, px + 1, py + 1, argb(a, lerp(light, WHITE, 0.35f)));
+        }
+        double haloR = ringR + 2.4;
+        int hpts = 72;
+        for (int k = 0; k < hpts; k++) {
+            double ang = k * Math.PI * 2 / hpts;
+            double s = 0.5 + 0.5 * Math.cos(ang - now * 0.003);
+            int ha = (int) (35 + 110 * s * s);
+            int px = cx + (int) Math.round(Math.cos(ang) * haloR);
+            int py = cy + (int) Math.round(Math.sin(ang) * haloR);
+            ctx.fill(px, py, px + 1, py + 1, argb(ha, light));
         }
         fillCircle(ctx, cx, cy, 7, 0xFF000000);
     }
@@ -208,7 +239,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
             float off = (float) Math.sin(p * Math.PI) * 14f * (1f - p);
             float x = q.sx() + dx * e + (-dy / len) * off;
             float y = q.sy() + dy * e + (dx / len) * off;
-            int size = p < 0.6f ? 2 : 1;
+            int size = p < 0.6f ? 3 : 2;
             int[] c = lerp(ORB, main, p);
             ctx.fill((int) x, (int) y, (int) x + size, (int) y + size, argb(255, c));
             return false;
@@ -258,4 +289,4 @@ public class BlackHoleXpClient implements ClientModInitializer {
         return (a << 24) | (c[0] << 16) | (c[1] << 8) | c[2];
     }
     }
-          }
+}
