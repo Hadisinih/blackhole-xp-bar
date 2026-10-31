@@ -144,7 +144,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
         if (level > 0) {
             boolean popping = now - levelUpAt < 450;
             int[] c = popping ? new int[]{255, 255, 255} : light;
-            ctx.drawCenteredTextWithShadow(mc.textRenderer, String.valueOf(level), cx, cy - 4, argb(255, c));
+            drawLevelNumber(ctx, cx, cy, level, argb(255, c));
         }
 
         drawHalo(ctx, cx, cy, light, now);
@@ -246,6 +246,46 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
     }
 
+    private static final String[][] DIGITS = {
+            {".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."},
+            {"..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."},
+            {".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"},
+            {".###.", "#...#", "....#", "..##.", "....#", "#...#", ".###."},
+            {"...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."},
+            {"#####", "#....", "####.", "....#", "....#", "#...#", ".###."},
+            {".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."},
+            {"#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."},
+            {".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."},
+            {".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."}
+    };
+
+    // Angka level digambar sendiri per piksel supaya pas di tengah lubang,
+    // tidak tergantung lebar huruf bawaan game.
+    private static void drawLevelNumber(DrawContext ctx, int cx, int cy, int level, int color) {
+        String s = String.valueOf(level);
+        int n = s.length();
+        int x = cx + 1 - 3 * n;
+        int y = cy - 3;
+        for (int d = 0; d < n; d++) {
+            String[] g = DIGITS[s.charAt(d) - '0'];
+            for (int row = 0; row < 7; row++) {
+                String line = g[row];
+                int col = 0;
+                while (col < 5) {
+                    if (line.charAt(col) == '#') {
+                        int end = col;
+                        while (end < 5 && line.charAt(end) == '#') end++;
+                        ctx.fill(x + col, y + row, x + end, y + row + 1, color);
+                        col = end;
+                    } else {
+                        col++;
+                    }
+                }
+            }
+            x += 6;
+        }
+    }
+
     private static void drawHalo(DrawContext ctx, int cx, int cy, int[] light, long now) {
         pulse *= 0.94f;
         double breathe = 0.5 + 0.5 * Math.sin(now / 318.0);
@@ -334,32 +374,49 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
     }
 
-    private static void drawVortex(DrawContext ctx, int cx, int cy, int[] main, long now) {
-        int[] light = lerp(main, WHITE, 0.55f);
-        fillDisk(ctx, cx, cy, 9.5, 0xF0160F2C);
+    private static void drawSelectedRing(DrawContext ctx, int cx, int cy, int[] main, long now) {
+        int[] hot = lerp(main, WHITE, 0.8f);
+        int[] mid = lerp(main, WHITE, 0.35f);
+        double spin = now * 0.004;
 
-        double spin = now * 0.005;
-        for (int arm = 0; arm < 4; arm++) {
-            double base = spin + arm * Math.PI / 2;
-            for (int k = 0; k < 9; k++) {
-                double r = 3.0 + k * 0.75;
-                double ang = base - k * 0.42;
-                int px = (int) Math.floor(cx + Math.cos(ang) * r);
-                int py = (int) Math.floor(cy + Math.sin(ang) * r);
-                float t = k / 8f;
-                ctx.fill(px, py, px + 1, py + 1, argb((int) (110 + 145 * t), lerp(main, light, t)));
-            }
+        // Cahaya luar yang berdenyut pelan.
+        double breathe = 0.5 + 0.5 * Math.sin(now / 240.0);
+        int glowA = (int) (55 + 45 * breathe);
+        for (int k = 0; k < 40; k++) {
+            double a = k * Math.PI * 2 / 40;
+            int px = (int) Math.floor(cx + Math.cos(a) * 10.5);
+            int py = (int) Math.floor(cy + Math.sin(a) * 10.5);
+            ctx.fill(px, py, px + 1, py + 1, argb(glowA, main));
         }
 
-        int pts = 36;
+        // Cincin inti setebal 2px, ada bagian panas yang berputar.
+        int pts = 52;
         for (int k = 0; k < pts; k++) {
             double a = k * Math.PI * 2 / pts;
-            double g = 0.5 + 0.5 * Math.cos(a - spin * 1.3);
-            double glow = g * g * g;
-            int px = (int) Math.floor(cx + Math.cos(a) * 9.8);
-            int py = (int) Math.floor(cy + Math.sin(a) * 9.8);
-            int size = glow > 0.7 ? 2 : 1;
-            ctx.fill(px, py, px + size, py + size, argb((int) (150 + 105 * glow), lerp(main, light, (float) glow)));
+            double g = 0.5 + 0.5 * Math.cos(a - spin * 1.5);
+            g = g * g;
+            int[] c = lerp(main, hot, (float) g);
+            int px = (int) Math.round(cx + Math.cos(a) * 8.6) - 1;
+            int py = (int) Math.round(cy + Math.sin(a) * 8.6) - 1;
+            ctx.fill(px, py, px + 2, py + 2, argb(235, c));
+        }
+
+        // Lidah api yang mengejar di sepanjang cincin, ke luar dan ke dalam.
+        for (int j = 0; j < 6; j++) {
+            boolean outward = (j % 2 == 0);
+            double head = spin * (outward ? 1.5 : 1.0) + j * Math.PI / 3;
+            double flick = 0.6 + 0.4 * Math.sin(now / 130.0 + j * 1.7);
+            int len = 3 + (int) Math.round(4 * flick);
+            for (int m = 0; m < len; m++) {
+                double t = m / 6.0;
+                double a = head - m * 0.17;
+                double r = outward ? 8.6 + 1.9 * t * flick : 8.6 - 2.2 * t * flick;
+                int px = (int) Math.floor(cx + Math.cos(a) * r);
+                int py = (int) Math.floor(cy + Math.sin(a) * r);
+                int[] c = t < 0.35 ? lerp(hot, mid, (float) (t / 0.35)) : lerp(mid, main, (float) ((t - 0.35) / 0.65));
+                int size = m < 2 ? 2 : 1;
+                ctx.fill(px, py, px + size, py + size, argb((int) (235 * (1.0 - t * 0.75)), c));
+            }
         }
     }
 
@@ -553,7 +610,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
     private static void drawSlot(DrawContext ctx, int bx, int by, boolean selected, int[] main, long now) {
         if (selected) {
-            drawVortex(ctx, bx + 9, by + 9, main, now);
+            fillDisk(ctx, bx + 9, by + 9, 9.5, 0xB0100A22);
             return;
         }
         int border = 0xFF3A2F66;
@@ -586,6 +643,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
             drawSlot(ctx, bx, by, i == sel, main, now);
             ItemStack st = p.getInventory().getStack(i);
             if (!st.isEmpty()) drawStack(ctx, mc, st, bx + 1, by + 1);
+            if (i == sel) drawSelectedRing(ctx, bx + 9, by + 9, main, now);
         }
 
         ItemStack off = p.getOffHandStack();
