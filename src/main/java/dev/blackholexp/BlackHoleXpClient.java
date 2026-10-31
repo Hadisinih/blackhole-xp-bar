@@ -81,7 +81,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
     private static final int[] ORANGE = {255, 138, 61};
     private static final int[] DEEP = {91, 33, 182};
     private static final int[] ORB = {184, 240, 58};
-    private static final int MAX_LEVEL_COLOR = 100;
+    private static final int MAX_LEVEL_COLOR = 50;
 
     private static final int[] WHITE = {255, 255, 255};
 
@@ -168,9 +168,9 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
         if (level > lastLevel) {
             levelUpAt = now;
-            WAVES.add(new Wave(now, 600, true));
-            for (int i = 0; i < 3; i++) WAVES.add(new Wave(now + i * 160L, 1100, false));
-            spawn(14, x0, y0, now);
+            WAVES.add(new Wave(now, 450, true));
+            for (int i = 0; i < 2; i++) WAVES.add(new Wave(now + i * 220L, 900, false));
+            spawn(8, x0, y0, now);
         } else if (total > lastTotal + 0.0001f) {
             float d = total - lastTotal;
             int n = Math.max(3, Math.min(10, (int) (d * 60f) + 3));
@@ -299,17 +299,17 @@ public class BlackHoleXpClient implements ClientModInitializer {
             if (p >= 1f) return true;
             if (p < 0f) return false;
             if (w.flash()) {
-                fillCircle(ctx, cx, cy, (int) (8 + 26 * p), argb((int) (200 * (1f - p)), new int[]{255, 255, 255}));
+                fillCircle(ctx, cx, cy, (int) (8 + 22 * p), argb((int) (190 * (1f - p)), new int[]{255, 255, 255}));
             } else {
                 float q = 1f - (1f - p) * (1f - p);
-                double r = 10 + 60 * q;
+                double r = 10 + 55 * q;
                 int a = (int) (230 * (1f - p));
-                int pts = Math.max(24, (int) (r * 2.2));
+                int pts = Math.max(20, (int) (r * 1.3));
                 for (int k = 0; k < pts; k++) {
                     double ang = k * Math.PI * 2 / pts;
                     int px = cx + (int) Math.round(Math.cos(ang) * r);
                     int py = cy + (int) Math.round(Math.sin(ang) * r);
-                    ctx.fill(px, py, px + 1, py + 1, argb(a, main));
+                    ctx.fill(px, py, px + 2, py + 2, argb(a, main));
                 }
             }
             return false;
@@ -317,9 +317,49 @@ public class BlackHoleXpClient implements ClientModInitializer {
     }
 
     private static void fillCircle(DrawContext ctx, int cx, int cy, int r, int color) {
-        for (int dy = -r; dy <= r; dy++) {
+        int step = r > 12 ? 2 : 1;
+        for (int dy = -r; dy <= r; dy += step) {
             int dx = (int) Math.sqrt((double) r * r - (double) dy * dy);
-            ctx.fill(cx - dx, cy + dy, cx + dx + 1, cy + dy + 1, color);
+            ctx.fill(cx - dx, cy + dy, cx + dx + 1, cy + dy + step, color);
+        }
+    }
+
+    private static void fillDisk(DrawContext ctx, int cx, int cy, double r, int color) {
+        int n = (int) Math.ceil(r);
+        for (int dy = -n; dy < n; dy++) {
+            double yy = dy + 0.5;
+            if (Math.abs(yy) > r) continue;
+            int dx = (int) Math.round(Math.sqrt(r * r - yy * yy));
+            ctx.fill(cx - dx, cy + dy, cx + dx, cy + dy + 1, color);
+        }
+    }
+
+    private static void drawVortex(DrawContext ctx, int cx, int cy, int[] main, long now) {
+        int[] light = lerp(main, WHITE, 0.55f);
+        fillDisk(ctx, cx, cy, 9.5, 0xF0160F2C);
+
+        double spin = now * 0.005;
+        for (int arm = 0; arm < 4; arm++) {
+            double base = spin + arm * Math.PI / 2;
+            for (int k = 0; k < 9; k++) {
+                double r = 3.0 + k * 0.75;
+                double ang = base - k * 0.42;
+                int px = (int) Math.floor(cx + Math.cos(ang) * r);
+                int py = (int) Math.floor(cy + Math.sin(ang) * r);
+                float t = k / 8f;
+                ctx.fill(px, py, px + 1, py + 1, argb((int) (110 + 145 * t), lerp(main, light, t)));
+            }
+        }
+
+        int pts = 36;
+        for (int k = 0; k < pts; k++) {
+            double a = k * Math.PI * 2 / pts;
+            double g = 0.5 + 0.5 * Math.cos(a - spin * 1.3);
+            double glow = g * g * g;
+            int px = (int) Math.floor(cx + Math.cos(a) * 9.8);
+            int py = (int) Math.floor(cy + Math.sin(a) * 9.8);
+            int size = glow > 0.7 ? 2 : 1;
+            ctx.fill(px, py, px + size, py + size, argb((int) (150 + 105 * glow), lerp(main, light, (float) glow)));
         }
     }
 
@@ -512,27 +552,16 @@ public class BlackHoleXpClient implements ClientModInitializer {
     // ---------- Hotbar ----------
 
     private static void drawSlot(DrawContext ctx, int bx, int by, boolean selected, int[] main, long now) {
-        int border = selected ? argb(255, main) : 0xFF3A2F66;
-        int inner = selected ? 0xF0160F2C : 0xE0000000;
-        ctx.fill(bx + 1, by + 1, bx + 17, by + 17, inner);
+        if (selected) {
+            drawVortex(ctx, bx + 9, by + 9, main, now);
+            return;
+        }
+        int border = 0xFF3A2F66;
+        ctx.fill(bx + 1, by + 1, bx + 17, by + 17, 0xE0000000);
         ctx.fill(bx + 1, by, bx + 17, by + 1, border);
         ctx.fill(bx + 1, by + 17, bx + 17, by + 18, border);
         ctx.fill(bx, by + 1, bx + 1, by + 17, border);
         ctx.fill(bx + 17, by + 1, bx + 18, by + 17, border);
-
-        if (selected) {
-            int[] light = lerp(main, WHITE, 0.6f);
-            ctx.fill(bx - 1, by + 2, bx, by + 16, argb(150, main));
-            ctx.fill(bx + 18, by + 2, bx + 19, by + 16, argb(150, main));
-            ctx.fill(bx + 2, by - 1, bx + 16, by, argb(150, main));
-            ctx.fill(bx + 2, by + 18, bx + 16, by + 19, argb(150, main));
-            double tw = 0.5 + 0.5 * Math.sin(now / 260.0);
-            int a = (int) (170 + 85 * tw);
-            ctx.fill(bx - 1, by - 1, bx + 1, by + 1, argb(a, light));
-            ctx.fill(bx + 17, by - 1, bx + 19, by + 1, argb(a, light));
-            ctx.fill(bx - 1, by + 17, bx + 1, by + 19, argb(a, light));
-            ctx.fill(bx + 17, by + 17, bx + 19, by + 19, argb(a, light));
-        }
     }
 
     public static void renderHotbar(DrawContext ctx, MinecraftClient mc) {
