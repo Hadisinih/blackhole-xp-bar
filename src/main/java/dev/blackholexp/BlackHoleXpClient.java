@@ -16,7 +16,7 @@ import java.util.Random;
 
 public class BlackHoleXpClient implements ClientModInitializer {
 
-    private static final float SHIFT = 5f;
+    private static final float SHIFT = 11f;
 
     @Override
     public void onInitializeClient() {
@@ -47,6 +47,17 @@ public class BlackHoleXpClient implements ClientModInitializer {
         HudElementRegistry.replaceElement(VanillaHudElements.AIR_BAR, BlackHoleXpClient::shifted);
         HudElementRegistry.replaceElement(VanillaHudElements.MOUNT_HEALTH, BlackHoleXpClient::shifted);
 
+        // Nama item yang dipegang ikut naik di survival supaya tidak menimpa armor.
+        HudElementRegistry.replaceElement(VanillaHudElements.HELD_ITEM_TOOLTIP, (HudElement vanilla) -> (ctx, tick) -> {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            boolean bars = mc.player != null && !mc.player.isCreative() && !mc.player.isSpectator();
+            if (bars) {
+                shifted(vanilla).render(ctx, tick);
+            } else {
+                vanilla.render(ctx, tick);
+            }
+        });
+
         HudElementRegistry.attachElementAfter(VanillaHudElements.HOTBAR,
                 Identifier.of("blackholexpbar", "hotbar_frame"),
                 (ctx, tick) -> BlackHoleHud.renderHotbarFrame(ctx, MinecraftClient.getInstance()));
@@ -72,12 +83,12 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
     private static final int[] WHITE = {255, 255, 255};
 
-    // Bar putus-putus: 11 kotak, makin ke arah black hole makin kecil.
-    private static final int SEGS = 11;
-    private static final int SEG_W = 12;
+    // Bar terbelah dua (kiri dan kanan), black hole di tengah.
+    // Tiap sisi 5 kotak, makin dekat black hole makin kecil.
+    private static final int SEGS_SIDE = 5;
+    private static final int SEG_W = 11;
     private static final int SEG_GAP = 3;
     private static final int BAR_H = 7;
-    private static final int HOLE_DX = 194;
 
     private static final Random RNG = new Random();
     private static final List<Particle> PARTICLES = new ArrayList<>();
@@ -110,8 +121,8 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
         int x0 = sw / 2 - 91;
         int y0 = sh - 32 + 3;
-        int barTop = sh - 33;
-        int cx = x0 + HOLE_DX;
+        int barTop = sh - 37;
+        int cx = sw / 2;
         int cy = barTop + BAR_H / 2;
 
         int level = player.experienceLevel;
@@ -121,18 +132,21 @@ public class BlackHoleXpClient implements ClientModInitializer {
         int[] main = levelColor(level);
         int[] light = lerp(main, new int[]{255, 255, 255}, 0.45f);
 
-        drawBar(ctx, x0, barTop, progress, main, now);
+        drawBar(ctx, x0, barTop, progress, main);
         drawDisk(ctx, cx, cy, main, light, now, false);
-        drawCore(ctx, cx, cy, light, now);
+        fillCircle(ctx, cx, cy, 7, 0xFF000000);
+
+        // Angka level di tengah lubang, digambar sebelum cincin supaya tertutup cincin.
+        if (level > 0) {
+            boolean popping = now - levelUpAt < 450;
+            int[] c = popping ? new int[]{255, 255, 255} : light;
+            ctx.drawCenteredTextWithShadow(mc.textRenderer, String.valueOf(level), cx, cy - 4, argb(255, c));
+        }
+
+        drawHalo(ctx, cx, cy, light, now);
         drawDisk(ctx, cx, cy, main, light, now, true);
         drawParticles(ctx, cx, cy, main, now);
         drawWaves(ctx, cx, cy, main, now);
-
-        if (level > 0) {
-            boolean popping = now - levelUpAt < 450;
-            int[] c = popping ? new int[]{255, 255, 255} : main;
-            ctx.drawCenteredTextWithShadow(mc.textRenderer, String.valueOf(level), sw / 2, sh - 44, argb(255, c));
-        }
     }
 
     private static void trackChanges(int level, float progress, int x0, int y0, int sw, int sh, long now) {
@@ -171,35 +185,35 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
     }
 
-    private static void drawBar(DrawContext ctx, int x0, int top, float progress, int[] main, long now) {
-        float pos = Math.max(0f, Math.min(1f, progress)) * SEGS;
-        int full = (int) pos;
-        float frac = pos - full;
-        float shift = (now % 900L) / 900f * 12f;
+    private static void drawBar(DrawContext ctx, int x0, int top, float progress, int[] main) {
+        float pos = Math.max(0f, Math.min(1f, progress)) * (SEGS_SIDE * 2);
 
-        for (int i = 0; i < SEGS; i++) {
-            int sx = x0 + i * (SEG_W + SEG_GAP);
-            float t = i / (float) (SEGS - 1);
-            int h = BAR_H - Math.round(t * 4f);
-            int fy = top + (BAR_H - h) / 2;
-            boolean filled = i < full;
+        for (int side = 0; side < 2; side++) {
+            for (int i = 0; i < SEGS_SIDE; i++) {
+                int idx = side * SEGS_SIDE + i;
+                int sx = side == 0
+                        ? x0 + i * (SEG_W + SEG_GAP)
+                        : x0 + 182 - SEG_W - i * (SEG_W + SEG_GAP);
+                float t = i / (float) (SEGS_SIDE - 1);
+                int h = BAR_H - Math.round(t * 4f);
+                int fy = top + (BAR_H - h) / 2;
 
-            if (!filled) {
-                ctx.fill(sx - 1, top - 1, sx + SEG_W + 1, top + BAR_H + 1, 0xFF3A2F66);
-                ctx.fill(sx, top, sx + SEG_W, top + BAR_H, 0xFF000000);
-            }
+                float f = Math.max(0f, Math.min(1f, pos - idx));
+                int fillW = Math.round(f * SEG_W);
 
-            int fillW = filled ? SEG_W : (i == full ? Math.round(frac * SEG_W) : 0);
-            for (int c = 0; c < fillW; c++) {
-                float wave = ((sx + c - shift) % 12f + 12f) % 12f;
-                int[] col = lerp(DEEP, main, t);
-                if (wave < 2f) col = lerp(col, WHITE, 0.28f);
-                ctx.fill(sx + c, fy, sx + c + 1, fy + h, argb(255, col));
+                if (fillW < SEG_W) {
+                    ctx.fill(sx - 1, top - 1, sx + SEG_W + 1, top + BAR_H + 1, 0xFF3A2F66);
+                    ctx.fill(sx, top, sx + SEG_W, top + BAR_H, 0xFF000000);
+                }
+                if (fillW > 0) {
+                    int xa = side == 0 ? sx : sx + SEG_W - fillW;
+                    int xb = side == 0 ? sx + fillW : sx + SEG_W;
+                    ctx.fill(xa, fy, xb, fy + h, argb(255, lerp(DEEP, main, t)));
+                }
             }
         }
     }
 
-    // front=false gambar separuh disk di belakang lubang, front=true separuh di depan.
     private static void drawDisk(DrawContext ctx, int cx, int cy, int[] main, int[] light, long now, boolean front) {
         double tilt = Math.toRadians(-12);
         double ct = Math.cos(tilt), st = Math.sin(tilt);
@@ -228,7 +242,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
     }
 
-    private static void drawCore(DrawContext ctx, int cx, int cy, int[] light, long now) {
+    private static void drawHalo(DrawContext ctx, int cx, int cy, int[] light, long now) {
         pulse *= 0.94f;
         double breathe = 0.5 + 0.5 * Math.sin(now / 318.0);
         double ringR = 8.0 + breathe * 0.6 + pulse * 2.5;
@@ -250,7 +264,6 @@ public class BlackHoleXpClient implements ClientModInitializer {
             int py = cy + (int) Math.round(Math.sin(ang) * haloR);
             ctx.fill(px, py, px + 1, py + 1, argb(ha, light));
         }
-        fillCircle(ctx, cx, cy, 7, 0xFF000000);
     }
 
     private static void drawParticles(DrawContext ctx, int cx, int cy, int[] main, long now) {
@@ -434,7 +447,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
         int sw = mc.getWindow().getScaledWidth();
         int sh = mc.getWindow().getScaledHeight();
         int x0 = sw / 2 - 91;
-        int baseY = sh - 44;
+        int baseY = sh - 50;
 
         int hp = (int) Math.ceil(p.getHealth());
         int absHp = (int) Math.ceil(p.getAbsorptionAmount());
@@ -479,7 +492,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
         int sw = mc.getWindow().getScaledWidth();
         int sh = mc.getWindow().getScaledHeight();
         int x0 = sw / 2 - 91;
-        int baseY = sh - 44;
+        int baseY = sh - 50;
         int food = p.getHungerManager().getFoodLevel();
         Pal pal = p.hasStatusEffect(StatusEffects.HUNGER) ? FOOD_HUNGER : FOOD_NORMAL;
 
