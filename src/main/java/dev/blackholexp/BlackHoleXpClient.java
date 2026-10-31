@@ -7,8 +7,10 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.client.option.AttackIndicator;
 import net.minecraft.entity.effect.StatusEffects;
-import net.minecraft.util.Identifier;
+import net.minecraft.item.ItemStack;
+import net.minecraft.util.Arm;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,31 +44,31 @@ public class BlackHoleXpClient implements ClientModInitializer {
         HudElementRegistry.replaceElement(VanillaHudElements.FOOD_BAR, (HudElement vanilla) -> (ctx, tick) ->
                 BlackHoleHud.renderFood(ctx, MinecraftClient.getInstance()));
 
-        // Armor, udara, dan hati tunggangan ikut naik supaya tidak menabrak hati baru.
-        HudElementRegistry.replaceElement(VanillaHudElements.ARMOR_BAR, BlackHoleXpClient::shifted);
-        HudElementRegistry.replaceElement(VanillaHudElements.AIR_BAR, BlackHoleXpClient::shifted);
-        HudElementRegistry.replaceElement(VanillaHudElements.MOUNT_HEALTH, BlackHoleXpClient::shifted);
+        // Armor ikut hati ke kiri, udara dan hati tunggangan ikut lapar ke kanan, semuanya naik.
+        HudElementRegistry.replaceElement(VanillaHudElements.ARMOR_BAR, (HudElement v) -> shifted(v, -13f, SHIFT));
+        HudElementRegistry.replaceElement(VanillaHudElements.AIR_BAR, (HudElement v) -> shifted(v, 13f, SHIFT));
+        HudElementRegistry.replaceElement(VanillaHudElements.MOUNT_HEALTH, (HudElement v) -> shifted(v, 13f, SHIFT));
 
         // Nama item yang dipegang ikut naik di survival supaya tidak menimpa armor.
         HudElementRegistry.replaceElement(VanillaHudElements.HELD_ITEM_TOOLTIP, (HudElement vanilla) -> (ctx, tick) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
             boolean bars = mc.player != null && !mc.player.isCreative() && !mc.player.isSpectator();
             if (bars) {
-                shifted(vanilla).render(ctx, tick);
+                shifted(vanilla, 0f, SHIFT).render(ctx, tick);
             } else {
                 vanilla.render(ctx, tick);
             }
         });
 
-        HudElementRegistry.attachElementAfter(VanillaHudElements.HOTBAR,
-                Identifier.of("blackholexpbar", "hotbar_frame"),
-                (ctx, tick) -> BlackHoleHud.renderHotbarFrame(ctx, MinecraftClient.getInstance()));
+        // Hotbar diganti total dengan versi bertema black hole.
+        HudElementRegistry.replaceElement(VanillaHudElements.HOTBAR, (HudElement vanilla) -> (ctx, tick) ->
+                BlackHoleHud.renderHotbar(ctx, MinecraftClient.getInstance()));
     }
 
-    private static HudElement shifted(HudElement vanilla) {
+    private static HudElement shifted(HudElement vanilla, float dx, float dy) {
         return (ctx, tick) -> {
             ctx.getMatrices().pushMatrix();
-            ctx.getMatrices().translate(0f, -SHIFT);
+            ctx.getMatrices().translate(dx, -dy);
             vanilla.render(ctx, tick);
             ctx.getMatrices().popMatrix();
         };
@@ -89,6 +91,8 @@ public class BlackHoleXpClient implements ClientModInitializer {
     private static final int SEG_W = 11;
     private static final int SEG_GAP = 3;
     private static final int BAR_H = 7;
+    // Tinggi harus ganjil supaya kotak terisi pas di tengah bar (7 - tinggi) / 2 selalu bulat.
+    private static final int[] SEG_H = {7, 5, 5, 3, 3};
 
     private static final Random RNG = new Random();
     private static final List<Particle> PARTICLES = new ArrayList<>();
@@ -195,7 +199,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
                         ? x0 + i * (SEG_W + SEG_GAP)
                         : x0 + 182 - SEG_W - i * (SEG_W + SEG_GAP);
                 float t = i / (float) (SEGS_SIDE - 1);
-                int h = BAR_H - Math.round(t * 4f);
+                int h = SEG_H[i];
                 int fy = top + (BAR_H - h) / 2;
 
                 float f = Math.max(0f, Math.min(1f, pos - idx));
@@ -446,7 +450,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
         long now = System.currentTimeMillis();
         int sw = mc.getWindow().getScaledWidth();
         int sh = mc.getWindow().getScaledHeight();
-        int x0 = sw / 2 - 91;
+        int x0 = sw / 2 - 91 - 13;
         int baseY = sh - 50;
 
         int hp = (int) Math.ceil(p.getHealth());
@@ -497,7 +501,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
         Pal pal = p.hasStatusEffect(StatusEffects.HUNGER) ? FOOD_HUNGER : FOOD_NORMAL;
 
         for (int i = 0; i < 10; i++) {
-            int x = x0 + 173 - 8 * i;
+            int x = x0 + 186 - 8 * i;
             int left = food - i * 2;
             if (left >= 2) drawIcon(ctx, x, baseY, FOOD_RECTS, pal, 0, 9);
             else if (left == 1) drawIcon(ctx, x, baseY, FOOD_RECTS, pal, 4, 9);
@@ -505,27 +509,106 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
     }
 
-    // Bingkai tipis di atas hotbar. Tekstur slot hotbar tidak disentuh.
-    public static void renderHotbarFrame(DrawContext ctx, MinecraftClient mc) {
+    // ---------- Hotbar ----------
+
+    private static void drawSlot(DrawContext ctx, int bx, int by, boolean selected, int[] main, long now) {
+        int border = selected ? argb(255, main) : 0xFF3A2F66;
+        int inner = selected ? 0xF0160F2C : 0xE0000000;
+        ctx.fill(bx + 1, by + 1, bx + 17, by + 17, inner);
+        ctx.fill(bx + 1, by, bx + 17, by + 1, border);
+        ctx.fill(bx + 1, by + 17, bx + 17, by + 18, border);
+        ctx.fill(bx, by + 1, bx + 1, by + 17, border);
+        ctx.fill(bx + 17, by + 1, bx + 18, by + 17, border);
+
+        if (selected) {
+            int[] light = lerp(main, WHITE, 0.6f);
+            ctx.fill(bx - 1, by + 2, bx, by + 16, argb(150, main));
+            ctx.fill(bx + 18, by + 2, bx + 19, by + 16, argb(150, main));
+            ctx.fill(bx + 2, by - 1, bx + 16, by, argb(150, main));
+            ctx.fill(bx + 2, by + 18, bx + 16, by + 19, argb(150, main));
+            double tw = 0.5 + 0.5 * Math.sin(now / 260.0);
+            int a = (int) (170 + 85 * tw);
+            ctx.fill(bx - 1, by - 1, bx + 1, by + 1, argb(a, light));
+            ctx.fill(bx + 17, by - 1, bx + 19, by + 1, argb(a, light));
+            ctx.fill(bx - 1, by + 17, bx + 1, by + 19, argb(a, light));
+            ctx.fill(bx + 17, by + 17, bx + 19, by + 19, argb(a, light));
+        }
+    }
+
+    public static void renderHotbar(DrawContext ctx, MinecraftClient mc) {
         ClientPlayerEntity p = mc.player;
         if (p == null) return;
         long now = System.currentTimeMillis();
         int sw = mc.getWindow().getScaledWidth();
         int sh = mc.getWindow().getScaledHeight();
         int x0 = sw / 2 - 91;
-        int top = sh - 23;
         int[] main = levelColor(p.experienceLevel);
-        float shift = (now % 2600L) / 2600f;
+        int sel = p.getInventory().getSelectedSlot();
 
-        for (int i = 0; i < 182; i += 3) {
-            float t = i / 181f;
-            float d = Math.abs(t - shift);
-            d = Math.min(d, 1f - d);
-            float b = Math.max(0f, 1f - d * 7f);
-            int[] c = lerp(lerp(DEEP, main, t), WHITE, 0.55f * b);
-            int w = Math.min(3, 182 - i);
-            ctx.fill(x0 + i, top, x0 + i + w, top + 1, argb(235, c));
+        // Plat gelap tembus pandang di belakang semua slot.
+        ctx.fill(x0, sh - 22, x0 + 182, sh, 0xA0070512);
+        ctx.fill(x0, sh - 22, x0 + 182, sh - 21, 0xFF1E1536);
+        ctx.fill(x0, sh - 22, x0 + 1, sh, 0xFF1E1536);
+        ctx.fill(x0 + 181, sh - 22, x0 + 182, sh, 0xFF1E1536);
+
+        for (int i = 0; i < 9; i++) {
+            int bx = x0 + 2 + 20 * i;
+            int by = sh - 20;
+            drawSlot(ctx, bx, by, i == sel, main, now);
+            ItemStack st = p.getInventory().getStack(i);
+            if (!st.isEmpty()) drawStack(ctx, mc, st, bx + 1, by + 1);
         }
+
+        ItemStack off = p.getOffHandStack();
+        if (!off.isEmpty()) {
+            boolean left = p.getMainArm() == Arm.RIGHT;
+            int bx = left ? x0 - 27 : x0 + 191;
+            int by = sh - 20;
+            ctx.fill(bx - 2, sh - 22, bx + 20, sh, 0xA0070512);
+            drawSlot(ctx, bx, by, false, main, now);
+            drawStack(ctx, mc, off, bx + 1, by + 1);
+        }
+
+        drawAttackIndicator(ctx, mc, p, x0, sh, main, now);
+    }
+
+    // Item "memantul" sebentar waktu baru masuk ke slot, sama seperti hotbar bawaan.
+    private static void drawStack(DrawContext ctx, MinecraftClient mc, ItemStack st, int x, int y) {
+        float pop = st.getBobbingAnimationTime();
+        boolean anim = pop > 0f;
+        if (anim) {
+            float g = 1.0f + pop / 5.0f;
+            ctx.getMatrices().pushMatrix();
+            ctx.getMatrices().translate(x + 8f, y + 12f);
+            ctx.getMatrices().scale(1.0f / g, (g + 1.0f) / 2.0f);
+            ctx.getMatrices().translate(-(x + 8f), -(y + 12f));
+        }
+        ctx.drawItem(st, x, y);
+        if (anim) ctx.getMatrices().popMatrix();
+        ctx.drawStackOverlay(mc.textRenderer, st, x, y);
+    }
+
+    // Indikator cooldown serangan versi hotbar (hanya kalau opsi Attack Indicator = Hotbar).
+    private static void drawAttackIndicator(DrawContext ctx, MinecraftClient mc, ClientPlayerEntity p,
+                                            int x0, int sh, int[] main, long now) {
+        if (mc.options.getAttackIndicator().getValue() != AttackIndicator.HOTBAR) return;
+        float prog = p.getAttackCooldownProgress(0.0f);
+        if (prog >= 1.0f) return;
+
+        boolean right = p.getMainArm() == Arm.RIGHT;
+        int bx = right ? x0 + 182 + 6 : x0 - 6 - 18;
+        int by = sh - 20;
+        ctx.fill(bx - 2, sh - 22, bx + 20, sh, 0xA0070512);
+        ctx.fill(bx + 1, by, bx + 17, by + 1, 0xFF3A2F66);
+        ctx.fill(bx + 1, by + 17, bx + 17, by + 18, 0xFF3A2F66);
+        ctx.fill(bx, by + 1, bx + 1, by + 17, 0xFF3A2F66);
+        ctx.fill(bx + 17, by + 1, bx + 18, by + 17, 0xFF3A2F66);
+        ctx.fill(bx + 1, by + 1, bx + 17, by + 17, 0xE0000000);
+
+        int h = Math.max(1, (int) (prog * 16f));
+        int[] light = lerp(main, WHITE, 0.5f);
+        ctx.fill(bx + 2, by + 17 - h, bx + 16, by + 17, argb(255, main));
+        ctx.fill(bx + 2, by + 17 - h, bx + 16, by + 18 - h, argb(255, light));
     }
 
     private static int argb0(int[] c) {
