@@ -364,62 +364,6 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
     }
 
-    private static void fillDisk(DrawContext ctx, int cx, int cy, double r, int color) {
-        int n = (int) Math.ceil(r);
-        for (int dy = -n; dy < n; dy++) {
-            double yy = dy + 0.5;
-            if (Math.abs(yy) > r) continue;
-            int dx = (int) Math.round(Math.sqrt(r * r - yy * yy));
-            ctx.fill(cx - dx, cy + dy, cx + dx, cy + dy + 1, color);
-        }
-    }
-
-    private static void drawSelectedRing(DrawContext ctx, int cx, int cy, int[] main, long now) {
-        int[] hot = lerp(main, WHITE, 0.8f);
-        int[] mid = lerp(main, WHITE, 0.35f);
-        double spin = now * 0.004;
-
-        // Cahaya luar yang berdenyut pelan.
-        double breathe = 0.5 + 0.5 * Math.sin(now / 240.0);
-        int glowA = (int) (55 + 45 * breathe);
-        for (int k = 0; k < 40; k++) {
-            double a = k * Math.PI * 2 / 40;
-            int px = (int) Math.floor(cx + Math.cos(a) * 10.5);
-            int py = (int) Math.floor(cy + Math.sin(a) * 10.5);
-            ctx.fill(px, py, px + 1, py + 1, argb(glowA, main));
-        }
-
-        // Cincin inti setebal 2px, ada bagian panas yang berputar.
-        int pts = 52;
-        for (int k = 0; k < pts; k++) {
-            double a = k * Math.PI * 2 / pts;
-            double g = 0.5 + 0.5 * Math.cos(a - spin * 1.5);
-            g = g * g;
-            int[] c = lerp(main, hot, (float) g);
-            int px = (int) Math.round(cx + Math.cos(a) * 8.6) - 1;
-            int py = (int) Math.round(cy + Math.sin(a) * 8.6) - 1;
-            ctx.fill(px, py, px + 2, py + 2, argb(235, c));
-        }
-
-        // Lidah api yang mengejar di sepanjang cincin, ke luar dan ke dalam.
-        for (int j = 0; j < 6; j++) {
-            boolean outward = (j % 2 == 0);
-            double head = spin * (outward ? 1.5 : 1.0) + j * Math.PI / 3;
-            double flick = 0.6 + 0.4 * Math.sin(now / 130.0 + j * 1.7);
-            int len = 3 + (int) Math.round(4 * flick);
-            for (int m = 0; m < len; m++) {
-                double t = m / 6.0;
-                double a = head - m * 0.17;
-                double r = outward ? 8.6 + 1.9 * t * flick : 8.6 - 2.2 * t * flick;
-                int px = (int) Math.floor(cx + Math.cos(a) * r);
-                int py = (int) Math.floor(cy + Math.sin(a) * r);
-                int[] c = t < 0.35 ? lerp(hot, mid, (float) (t / 0.35)) : lerp(mid, main, (float) ((t - 0.35) / 0.65));
-                int size = m < 2 ? 2 : 1;
-                ctx.fill(px, py, px + size, py + size, argb((int) (235 * (1.0 - t * 0.75)), c));
-            }
-        }
-    }
-
     private static int[] lerp(int[] a, int[] b, float t) {
         return new int[]{
                 Math.round(a[0] + (b[0] - a[0]) * t),
@@ -608,17 +552,26 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
     // ---------- Hotbar ----------
 
+    // Kotak dengan pojok melengkung (pojok dipotong 1px).
+    private static void roundedOutline(DrawContext ctx, int x, int y, int w, int h, int color) {
+        ctx.fill(x + 1, y, x + w - 1, y + 1, color);
+        ctx.fill(x + 1, y + h - 1, x + w - 1, y + h, color);
+        ctx.fill(x, y + 1, x + 1, y + h - 1, color);
+        ctx.fill(x + w - 1, y + 1, x + w, y + h - 1, color);
+    }
+
     private static void drawSlot(DrawContext ctx, int bx, int by, boolean selected, int[] main, long now) {
         if (selected) {
-            fillDisk(ctx, bx + 9, by + 9, 9.5, 0xB0100A22);
+            int[] bright = lerp(main, WHITE, 0.3f);
+            ctx.fill(bx + 1, by + 1, bx + 17, by + 17, 0xF0160F2C);
+            roundedOutline(ctx, bx - 2, by - 2, 22, 22, argb(70, main));
+            roundedOutline(ctx, bx - 1, by - 1, 20, 20, argb(190, main));
+            roundedOutline(ctx, bx, by, 18, 18, argb(255, bright));
+            roundedOutline(ctx, bx + 1, by + 1, 16, 16, argb(150, main));
             return;
         }
-        int border = 0xFF3A2F66;
+        roundedOutline(ctx, bx, by, 18, 18, 0xFF3A2F66);
         ctx.fill(bx + 1, by + 1, bx + 17, by + 17, 0xE0000000);
-        ctx.fill(bx + 1, by, bx + 17, by + 1, border);
-        ctx.fill(bx + 1, by + 17, bx + 17, by + 18, border);
-        ctx.fill(bx, by + 1, bx + 1, by + 17, border);
-        ctx.fill(bx + 17, by + 1, bx + 18, by + 17, border);
     }
 
     public static void renderHotbar(DrawContext ctx, MinecraftClient mc) {
@@ -643,7 +596,6 @@ public class BlackHoleXpClient implements ClientModInitializer {
             drawSlot(ctx, bx, by, i == sel, main, now);
             ItemStack st = p.getInventory().getStack(i);
             if (!st.isEmpty()) drawStack(ctx, mc, st, bx + 1, by + 1);
-            if (i == sel) drawSelectedRing(ctx, bx + 9, by + 9, main, now);
         }
 
         ItemStack off = p.getOffHandStack();
