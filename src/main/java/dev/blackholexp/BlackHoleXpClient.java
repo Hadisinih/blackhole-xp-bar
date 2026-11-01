@@ -1,19 +1,30 @@
 package dev.blackholexp;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.AttackIndicator;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.item.ItemStack;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Arm;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.Random;
 
 public class BlackHoleXpClient implements ClientModInitializer {
@@ -22,10 +33,12 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Crosshair kecil bertema; di mode spectator tetap pakai bawaan game.
+        Cfg.load();
+
+        // Crosshair kecil bertema; di mode spectator atau kalau dimatikan, pakai bawaan game.
         HudElementRegistry.replaceElement(VanillaHudElements.CROSSHAIR, (HudElement vanilla) -> (ctx, tick) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
-            if (mc.player != null && mc.player.isSpectator()) {
+            if (!Cfg.cross() || (mc.player != null && mc.player.isSpectator())) {
                 vanilla.render(ctx, tick);
                 return;
             }
@@ -34,7 +47,8 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
         HudElementRegistry.replaceElement(VanillaHudElements.INFO_BAR, (HudElement vanilla) -> (ctx, tick) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
-            if (BlackHoleHud.isActive(mc)) {
+            BlackHoleHud.update(mc);
+            if (BlackHoleHud.useCustomBar(mc)) {
                 BlackHoleHud.render(ctx, mc);
             } else {
                 vanilla.render(ctx, tick);
@@ -43,36 +57,59 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
         HudElementRegistry.replaceElement(VanillaHudElements.EXPERIENCE_LEVEL, (HudElement vanilla) -> (ctx, tick) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
-            if (!BlackHoleHud.isActive(mc)) {
+            if (!BlackHoleHud.useCustomBar(mc)) {
                 vanilla.render(ctx, tick);
             }
         });
 
-        HudElementRegistry.replaceElement(VanillaHudElements.HEALTH_BAR, (HudElement vanilla) -> (ctx, tick) ->
-                BlackHoleHud.renderHealth(ctx, MinecraftClient.getInstance()));
+        HudElementRegistry.replaceElement(VanillaHudElements.HEALTH_BAR, (HudElement vanilla) -> (ctx, tick) -> {
+            if (Cfg.hud()) {
+                BlackHoleHud.renderHealth(ctx, MinecraftClient.getInstance());
+            } else {
+                shifted(vanilla, 0f, lift()).render(ctx, tick);
+            }
+        });
 
-        HudElementRegistry.replaceElement(VanillaHudElements.FOOD_BAR, (HudElement vanilla) -> (ctx, tick) ->
-                BlackHoleHud.renderFood(ctx, MinecraftClient.getInstance()));
+        HudElementRegistry.replaceElement(VanillaHudElements.FOOD_BAR, (HudElement vanilla) -> (ctx, tick) -> {
+            if (Cfg.hud()) {
+                BlackHoleHud.renderFood(ctx, MinecraftClient.getInstance());
+            } else {
+                shifted(vanilla, 0f, lift()).render(ctx, tick);
+            }
+        });
 
         // Armor ikut hati ke kiri, udara dan hati tunggangan ikut lapar ke kanan, semuanya naik.
-        HudElementRegistry.replaceElement(VanillaHudElements.ARMOR_BAR, (HudElement v) -> shifted(v, -13f, SHIFT));
-        HudElementRegistry.replaceElement(VanillaHudElements.AIR_BAR, (HudElement v) -> shifted(v, 13f, SHIFT));
-        HudElementRegistry.replaceElement(VanillaHudElements.MOUNT_HEALTH, (HudElement v) -> shifted(v, 13f, SHIFT));
+        HudElementRegistry.replaceElement(VanillaHudElements.ARMOR_BAR, (HudElement v) -> (ctx, tick) ->
+                shifted(v, Cfg.hud() ? -13f : 0f, lift()).render(ctx, tick));
+        HudElementRegistry.replaceElement(VanillaHudElements.AIR_BAR, (HudElement v) -> (ctx, tick) ->
+                shifted(v, Cfg.hud() ? 13f : 0f, lift()).render(ctx, tick));
+        HudElementRegistry.replaceElement(VanillaHudElements.MOUNT_HEALTH, (HudElement v) -> (ctx, tick) ->
+                shifted(v, Cfg.hud() ? 13f : 0f, lift()).render(ctx, tick));
 
         // Nama item yang dipegang ikut naik di survival supaya tidak menimpa armor.
         HudElementRegistry.replaceElement(VanillaHudElements.HELD_ITEM_TOOLTIP, (HudElement vanilla) -> (ctx, tick) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
             boolean bars = mc.player != null && !mc.player.isCreative() && !mc.player.isSpectator();
-            if (bars) {
-                shifted(vanilla, 0f, SHIFT).render(ctx, tick);
+            if (bars && lift() > 0f) {
+                shifted(vanilla, 0f, lift()).render(ctx, tick);
             } else {
                 vanilla.render(ctx, tick);
             }
         });
 
         // Hotbar diganti total dengan versi bertema black hole.
-        HudElementRegistry.replaceElement(VanillaHudElements.HOTBAR, (HudElement vanilla) -> (ctx, tick) ->
-                BlackHoleHud.renderHotbar(ctx, MinecraftClient.getInstance()));
+        HudElementRegistry.replaceElement(VanillaHudElements.HOTBAR, (HudElement vanilla) -> (ctx, tick) -> {
+            if (Cfg.bar()) {
+                BlackHoleHud.renderHotbar(ctx, MinecraftClient.getInstance());
+            } else {
+                vanilla.render(ctx, tick);
+            }
+        });
+    }
+
+    // Seberapa jauh hati, lapar, armor, dan udara diangkat ke atas supaya tidak menimpa bar XP kita.
+    private static float lift() {
+        return (Cfg.hud() || Cfg.xp()) ? SHIFT : 0f;
     }
 
     private static HudElement shifted(HudElement vanilla, float dx, float dy) {
@@ -82,6 +119,160 @@ public class BlackHoleXpClient implements ClientModInitializer {
             vanilla.render(ctx, tick);
             ctx.getMatrices().popMatrix();
         };
+    }
+
+    // ---------- Pengaturan (bisa dibuka dari Mod Menu) ----------
+
+    public static final class Cfg {
+        public static boolean enabled = true;
+        public static boolean xpBar = true;
+        public static boolean locator = true;
+        public static boolean stats = true;
+        public static boolean hotbar = true;
+        public static boolean crosshair = true;
+        public static boolean sword = true;
+        public static boolean levelFx = true;
+        public static boolean xpParticles = true;
+
+        static final String[] NAMES = {
+                "Bar XP black hole", "Penunjuk arah petir", "Hati & lapar", "Hotbar",
+                "Crosshair", "Indikator pedang", "Efek naik level", "Partikel serap XP"
+        };
+
+        static boolean xp() { return enabled && xpBar; }
+        static boolean loc() { return enabled && locator; }
+        static boolean hud() { return enabled && stats; }
+        static boolean bar() { return enabled && hotbar; }
+        static boolean cross() { return enabled && crosshair; }
+        static boolean blade() { return enabled && sword; }
+        static boolean fx() { return enabled && levelFx; }
+        static boolean orbs() { return enabled && xpParticles; }
+
+        static boolean get(int i) {
+            switch (i) {
+                case 0: return xpBar;
+                case 1: return locator;
+                case 2: return stats;
+                case 3: return hotbar;
+                case 4: return crosshair;
+                case 5: return sword;
+                case 6: return levelFx;
+                default: return xpParticles;
+            }
+        }
+
+        static void set(int i, boolean v) {
+            switch (i) {
+                case 0: xpBar = v; break;
+                case 1: locator = v; break;
+                case 2: stats = v; break;
+                case 3: hotbar = v; break;
+                case 4: crosshair = v; break;
+                case 5: sword = v; break;
+                case 6: levelFx = v; break;
+                default: xpParticles = v; break;
+            }
+        }
+
+        private static Path file() {
+            return FabricLoader.getInstance().getConfigDir().resolve("blackholexpbar.properties");
+        }
+
+        private static boolean flag(Properties p, String key, boolean def) {
+            String v = p.getProperty(key);
+            return v == null ? def : Boolean.parseBoolean(v.trim());
+        }
+
+        public static void load() {
+            Properties p = new Properties();
+            try (InputStream in = Files.newInputStream(file())) {
+                p.load(in);
+            } catch (IOException | RuntimeException e) {
+                return;
+            }
+            enabled = flag(p, "enabled", true);
+            xpBar = flag(p, "xpBar", true);
+            locator = flag(p, "locator", true);
+            stats = flag(p, "stats", true);
+            hotbar = flag(p, "hotbar", true);
+            crosshair = flag(p, "crosshair", true);
+            sword = flag(p, "sword", true);
+            levelFx = flag(p, "levelFx", true);
+            xpParticles = flag(p, "xpParticles", true);
+        }
+
+        public static void save() {
+            Properties p = new Properties();
+            p.setProperty("enabled", String.valueOf(enabled));
+            p.setProperty("xpBar", String.valueOf(xpBar));
+            p.setProperty("locator", String.valueOf(locator));
+            p.setProperty("stats", String.valueOf(stats));
+            p.setProperty("hotbar", String.valueOf(hotbar));
+            p.setProperty("crosshair", String.valueOf(crosshair));
+            p.setProperty("sword", String.valueOf(sword));
+            p.setProperty("levelFx", String.valueOf(levelFx));
+            p.setProperty("xpParticles", String.valueOf(xpParticles));
+            try (OutputStream out = Files.newOutputStream(file())) {
+                p.store(out, "Blackhole XP Bar");
+            } catch (IOException | RuntimeException ignored) {
+                // Gagal simpan tidak boleh bikin game error.
+            }
+        }
+    }
+
+    public static final class ConfigScreen extends Screen {
+        private final Screen parent;
+
+        public ConfigScreen(Screen parent) {
+            super(Text.literal("Blackhole XP Bar"));
+            this.parent = parent;
+        }
+
+        private static Text label(String name, boolean on) {
+            return Text.literal(name + ": ").append(Text.literal(on ? "ON" : "OFF").formatted(on ? Formatting.GREEN : Formatting.RED));
+        }
+
+        @Override
+        protected void init() {
+            int mid = this.width / 2;
+            this.addDrawableChild(ButtonWidget.builder(label("Aktifkan mod", Cfg.enabled), b -> {
+                Cfg.enabled = !Cfg.enabled;
+                b.setMessage(label("Aktifkan mod", Cfg.enabled));
+            }).dimensions(mid - 155, 36, 310, 20).build());
+
+            for (int i = 0; i < Cfg.NAMES.length; i++) {
+                final int idx = i;
+                int x = mid - 155 + (i % 2) * 160;
+                int y = 66 + (i / 2) * 24;
+                this.addDrawableChild(ButtonWidget.builder(label(Cfg.NAMES[i], Cfg.get(i)), b -> {
+                    Cfg.set(idx, !Cfg.get(idx));
+                    b.setMessage(label(Cfg.NAMES[idx], Cfg.get(idx)));
+                }).dimensions(x, y, 150, 20).build());
+            }
+
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("Selesai"), b -> this.close())
+                    .dimensions(mid - 100, this.height - 30, 200, 20).build());
+        }
+
+        @Override
+        public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+            super.render(context, mouseX, mouseY, delta);
+            context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, 15, 0xFFFFFFFF);
+        }
+
+        @Override
+        public void close() {
+            Cfg.save();
+            if (this.client != null) this.client.setScreen(this.parent);
+        }
+    }
+
+    // Dipanggil Mod Menu supaya muncul tombol pengaturan di daftar mod.
+    public static final class ModMenuHook implements com.terraformersmc.modmenu.api.ModMenuApi {
+        @Override
+        public com.terraformersmc.modmenu.api.ConfigScreenFactory<?> getModConfigScreenFactory() {
+            return ConfigScreen::new;
+        }
     }
 
     static final class BlackHoleHud {
@@ -126,6 +317,20 @@ public class BlackHoleXpClient implements ClientModInitializer {
     private record Wave(long born, int dur, boolean flash) {}
 
     private BlackHoleHud() {}
+
+    // Dipanggil tiap frame supaya perubahan XP tetap terdeteksi walau yang tampil penunjuk arah.
+    public static void update(MinecraftClient mc) {
+        ClientPlayerEntity p = mc.player;
+        if (p == null || !Cfg.xp()) return;
+        int sw = mc.getWindow().getScaledWidth();
+        int sh = mc.getWindow().getScaledHeight();
+        trackChanges(p.experienceLevel, p.experienceProgress, sw / 2 - 91, sh - 32 + 3, sw, sh, System.currentTimeMillis());
+    }
+
+    public static boolean useCustomBar(MinecraftClient mc) {
+        if (!Cfg.xp() || !isActive(mc)) return false;
+        return Cfg.loc() || !locatorMode(mc, System.currentTimeMillis());
+    }
 
     public static boolean isActive(MinecraftClient mc) {
         ClientPlayerEntity p = mc.player;
@@ -192,16 +397,18 @@ public class BlackHoleXpClient implements ClientModInitializer {
             return;
         }
         if (level > lastLevel) {
-            levelUpAt = now;
             xpActivityAt = now;
-            WAVES.add(new Wave(now, 450, true));
-            for (int i = 0; i < 2; i++) WAVES.add(new Wave(now + i * 220L, 900, false));
-            spawn(8, x0, y0, now);
+            if (Cfg.fx()) {
+                levelUpAt = now;
+                WAVES.add(new Wave(now, 450, true));
+                for (int i = 0; i < 2; i++) WAVES.add(new Wave(now + i * 220L, 900, false));
+            }
+            if (Cfg.orbs()) spawn(8, x0, y0, now);
         } else if (total > lastTotal + 0.0001f) {
             float d = total - lastTotal;
             xpActivityAt = now;
             int n = Math.max(3, Math.min(10, (int) (d * 60f) + 3));
-            spawn(n, x0, y0, now);
+            if (Cfg.orbs()) spawn(n, x0, y0, now);
         }
         lastLevel = level;
         lastTotal = total;
@@ -316,10 +523,79 @@ public class BlackHoleXpClient implements ClientModInitializer {
             ctx.fill(ix + 3 + o, iy + 3 + o, ix + 4 + o, iy + 4 + o, pass == 0 ? c : dot);
         }
         // Indikator serangan versi crosshair (hanya kalau opsi Attack Indicator = Crosshair).
-        if (mc.options.getAttackIndicator().getValue() == AttackIndicator.CROSSHAIR && prog < 1.0f) {
-            ctx.fill(ix - 1, iy + 10, ix + 8, iy + 12, 0x90000000);
-            int w = Math.max(1, (int) (prog * 9f));
-            ctx.fill(ix - 1, iy + 10, ix - 1 + w, iy + 12, argb(255, main));
+        if (mc.options.getAttackIndicator().getValue() == AttackIndicator.CROSSHAIR) {
+            if (Cfg.blade()) {
+                int sx = (sw - 16) / 2;
+                int sy = iy + 10;
+                if (prog < 1.0f) {
+                    drawSwordMask(ctx, SWORD_H, sx + 1, sy + 1, true, 16, 0x90000000, 0x90000000);
+                    drawSwordMask(ctx, SWORD_H, sx, sy, true, Math.max(1, Math.round(prog * 16f)),
+                            argb(255, lerp(main, WHITE, 0.4f)), 0xFF4A3F7A);
+                } else if (target) {
+                    drawSwordMask(ctx, SWORD_H, sx + 1, sy + 1, true, 16, 0x90000000, 0x90000000);
+                    int full = argb(255, lerp(ORANGE, WHITE, 0.35f));
+                    drawSwordMask(ctx, SWORD_H, sx, sy, true, 16, full, full);
+                }
+            } else if (prog < 1.0f) {
+                ctx.fill(ix - 1, iy + 10, ix + 8, iy + 12, 0x90000000);
+                int w = Math.max(1, (int) (prog * 9f));
+                ctx.fill(ix - 1, iy + 10, ix - 1 + w, iy + 12, argb(255, main));
+            }
+        }
+    }
+
+    // Pedang untuk indikator serangan: versi miring (di slot hotbar) dan versi mendatar (di bawah crosshair).
+    private static final String[] SWORD_V = {
+            "...............#",
+            "............###.",
+            "...........###..",
+            "..........###...",
+            ".........###....",
+            "........###.....",
+            "..##...###......",
+            "...##.###.......",
+            "....####........",
+            ".....##.........",
+            "....#.##........",
+            "...#...##.......",
+            "..#.............",
+            ".#..............",
+            "##..............",
+            "#..............."
+    };
+    private static final String[] SWORD_H = {
+            ".....#..........",
+            ".....#..........",
+            "#....##########.",
+            "################",
+            "#....##########.",
+            ".....#..........",
+            ".....#.........."
+    };
+
+    // Menggambar pedang; bagian yang "terisi" berwarna terang, sisanya redup.
+    // Horizontal: kolom di bawah boundary terisi. Vertikal: baris dari boundary ke bawah terisi.
+    private static void drawSwordMask(DrawContext ctx, String[] m, int x, int y, boolean horizontal,
+                                      int boundary, int fillCol, int emptyCol) {
+        for (int r = 0; r < m.length; r++) {
+            String line = m[r];
+            int c = 0;
+            while (c < line.length()) {
+                if (line.charAt(c) != '#') {
+                    c++;
+                    continue;
+                }
+                int e = c;
+                while (e < line.length() && line.charAt(e) == '#') e++;
+                if (horizontal) {
+                    int split = Math.max(c, Math.min(e, boundary));
+                    if (split > c) ctx.fill(x + c, y + r, x + split, y + r + 1, fillCol);
+                    if (e > split) ctx.fill(x + split, y + r, x + e, y + r + 1, emptyCol);
+                } else {
+                    ctx.fill(x + c, y + r, x + e, y + r + 1, r >= boundary ? fillCol : emptyCol);
+                }
+                c = e;
+            }
         }
     }
 
@@ -780,8 +1056,12 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
         int h = Math.max(1, (int) (prog * 16f));
         int[] light = lerp(main, WHITE, 0.5f);
-        ctx.fill(bx + 2, by + 17 - h, bx + 16, by + 17, argb(255, main));
-        ctx.fill(bx + 2, by + 17 - h, bx + 16, by + 18 - h, argb(255, light));
+        if (Cfg.blade()) {
+            drawSwordMask(ctx, SWORD_V, bx + 1, by + 1, false, 16 - h, argb(255, light), 0xFF4A3F7A);
+        } else {
+            ctx.fill(bx + 2, by + 17 - h, bx + 16, by + 17, argb(255, main));
+            ctx.fill(bx + 2, by + 17 - h, bx + 16, by + 18 - h, argb(255, light));
+        }
     }
 
     private static int argb0(int[] c) {
