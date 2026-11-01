@@ -22,6 +22,16 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        // Crosshair kecil bertema; di mode spectator tetap pakai bawaan game.
+        HudElementRegistry.replaceElement(VanillaHudElements.CROSSHAIR, (HudElement vanilla) -> (ctx, tick) -> {
+            MinecraftClient mc = MinecraftClient.getInstance();
+            if (mc.player != null && mc.player.isSpectator()) {
+                vanilla.render(ctx, tick);
+                return;
+            }
+            BlackHoleHud.renderCrosshair(ctx, mc);
+        });
+
         HudElementRegistry.replaceElement(VanillaHudElements.INFO_BAR, (HudElement vanilla) -> (ctx, tick) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
             if (BlackHoleHud.isActive(mc)) {
@@ -101,6 +111,15 @@ public class BlackHoleXpClient implements ClientModInitializer {
     private static float lastTotal = -1f;
     private static int lastLevel = -1;
     private static long levelUpAt = -100000L;
+    // Penunjuk arah player (locator bar): tampil menggantikan bar XP, seperti di game asli.
+    private static long xpActivityAt = -100000L;
+    private static final long XP_SHOW_MS = 5000L;
+    // Kalau titik player ternyata terbalik kiri-kanan, ubah jadi true.
+    private static final boolean LOCATOR_FLIP = false;
+    private static final int[][] DOT_COLORS = {
+            {255, 120, 170}, {90, 220, 255}, {255, 205, 70}, {184, 240, 58}, {235, 235, 255}, {255, 138, 61}
+    };
+    private static int[][] TRACK;
     private static float pulse = 0f;
 
     private record Particle(float sx, float sy, long born, int dur) {}
@@ -136,7 +155,12 @@ public class BlackHoleXpClient implements ClientModInitializer {
         int[] main = levelColor(level);
         int[] light = lerp(main, new int[]{255, 255, 255}, 0.45f);
 
-        drawBar(ctx, x0, barTop, progress, main);
+        boolean locator = locatorMode(mc, now);
+        if (locator) {
+            drawTrack(ctx, x0, cy, main, light, now);
+        } else {
+            drawBar(ctx, x0, barTop, progress, main);
+        }
         drawDisk(ctx, cx, cy, main, light, now, false);
         fillCircle(ctx, cx, cy, 7, 0xFF000000);
 
@@ -149,6 +173,7 @@ public class BlackHoleXpClient implements ClientModInitializer {
 
         drawHalo(ctx, cx, cy, light, now);
         drawDisk(ctx, cx, cy, main, light, now, true);
+        if (locator) drawLocatorDots(ctx, mc, cx, cy);
         drawParticles(ctx, cx, cy, main, now);
         drawWaves(ctx, cx, cy, main, now);
     }
@@ -168,11 +193,13 @@ public class BlackHoleXpClient implements ClientModInitializer {
         }
         if (level > lastLevel) {
             levelUpAt = now;
+            xpActivityAt = now;
             WAVES.add(new Wave(now, 450, true));
             for (int i = 0; i < 2; i++) WAVES.add(new Wave(now + i * 220L, 900, false));
             spawn(8, x0, y0, now);
         } else if (total > lastTotal + 0.0001f) {
             float d = total - lastTotal;
+            xpActivityAt = now;
             int n = Math.max(3, Math.min(10, (int) (d * 60f) + 3));
             spawn(n, x0, y0, now);
         }
@@ -186,6 +213,113 @@ public class BlackHoleXpClient implements ClientModInitializer {
             float sx = x0 - 10 + RNG.nextFloat() * 200f;
             float sy = top ? y0 - 70 + RNG.nextFloat() * 50f : y0 + 18 + RNG.nextFloat() * 14f;
             PARTICLES.add(new Particle(sx, sy, now + RNG.nextInt(450), 800 + RNG.nextInt(500)));
+        }
+    }
+
+    // Locator bar tampil kalau ada player lain yang bisa dilacak, kecuali beberapa detik setelah dapat XP.
+    private static boolean locatorMode(MinecraftClient mc, long now) {
+        var handler = mc.getNetworkHandler();
+        if (handler == null) return false;
+        if (now - xpActivityAt < XP_SHOW_MS) return false;
+        return handler.getWaypointHandler().hasWaypoint();
+    }
+
+    // Garis lintasan berbentuk petir, selebar bar XP. Dihitung sekali lalu dipakai ulang.
+    private static int[][] track() {
+        if (TRACK != null) return TRACK;
+        int[] zig = {-2, 1, -3, 2, -1, 3, -2, 0, 2, -3, 1, -1, 3, -2, 2, -3, 0, 1, -2, 3, -1, 2, -3, 0, 2, -1, -2, 3, -1, 1, -3, 2, 0};
+        int segW = 5;
+        int n = 180 / segW;
+        int[] pts = new int[n + 1];
+        for (int i = 1; i < n; i++) pts[i] = zig[(i - 1) % zig.length];
+        List<int[]> runs = new ArrayList<>();
+        for (int sIdx = 0; sIdx < n; sIdx++) {
+            int xa = 1 + sIdx * segW;
+            int dy = pts[sIdx + 1] - pts[sIdx];
+            int rows = Math.abs(dy) + 1;
+            int step = Integer.signum(dy);
+            for (int r = 0; r < rows; r++) {
+                int xs = xa + r * segW / rows;
+                int xe = xa + (r + 1) * segW / rows;
+                if (xe <= xs) xe = xs + 1;
+                runs.add(new int[]{xs, xe, pts[sIdx] + r * step});
+            }
+        }
+        TRACK = runs.toArray(new int[0][]);
+        return TRACK;
+    }
+
+    private static void drawTrack(DrawContext ctx, int x0, int cy, int[] main, int[] light, long now) {
+        int[] base = lerp(DEEP, main, 0.8f);
+        int baseCol = argb(255, base);
+        int glow = argb(55, main);
+        double hp = (now * 0.09) % 300.0 - 60.0;
+        double hp2 = 182.0 - hp;
+        for (int[] r : track()) {
+            int xs = x0 + r[0];
+            int xe = x0 + r[1];
+            int y = cy + r[2];
+            double xm = (r[0] + r[1]) * 0.5;
+            double g = Math.max(Math.max(0.0, 1.0 - Math.abs(xm - hp) / 18.0), Math.max(0.0, 1.0 - Math.abs(xm - hp2) / 18.0));
+            ctx.fill(xs, y - 1, xe, y + 2, glow);
+            ctx.fill(xs, y, xe, y + 1, g > 0.02 ? argb(255, lerp(base, light, (float) g)) : baseCol);
+        }
+        // Ujung lintasan, sejajar dengan ujung bar XP.
+        int cap = argb(255, DEEP);
+        ctx.fill(x0, cy - 3, x0 + 1, cy + 4, cap);
+        ctx.fill(x0 + 181, cy - 3, x0 + 182, cy + 4, cap);
+    }
+
+    // Bulatan penunjuk arah player lain, posisi mengikuti arah pandangan.
+    private static void drawLocatorDots(DrawContext ctx, MinecraftClient mc, int cx, int cy) {
+        var handler = mc.getNetworkHandler();
+        var entity = mc.getCameraEntity();
+        if (handler == null || entity == null || mc.world == null) return;
+        var cam = mc.gameRenderer.getCamera();
+        float tickProgress = mc.getRenderTickCounter().getTickProgress(false);
+        List<double[]> dots = new ArrayList<>();
+        handler.getWaypointHandler().forEachWaypoint(entity, wp -> {
+            double d = wp.getRelativeYaw(mc.world, cam, e -> tickProgress);
+            if (d <= -61.0 || d > 60.0) return;
+            dots.add(new double[]{d, wp.getSource().hashCode() & 0x7fffffff});
+        });
+        for (double[] dot : dots) {
+            double off = Math.max(-86.0, Math.min(86.0, dot[0] / 61.0 * 86.0));
+            int px = cx + (int) Math.round(LOCATOR_FLIP ? -off : off);
+            int[] c = DOT_COLORS[(int) (dot[1] % DOT_COLORS.length)];
+            fillCircle(ctx, px, cy, 4, 0xE00A0614);
+            fillCircle(ctx, px, cy, 3, argb(255, c));
+            ctx.fill(px - 1, cy - 1, px, cy, argb(220, WHITE));
+        }
+    }
+
+    // Crosshair kecil: empat garis pendek dan titik tengah, tidak menutupi apa yang dibidik.
+    public static void renderCrosshair(DrawContext ctx, MinecraftClient mc) {
+        ClientPlayerEntity p = mc.player;
+        if (p == null || !mc.options.getPerspective().isFirstPerson()) return;
+        int sw = mc.getWindow().getScaledWidth();
+        int sh = mc.getWindow().getScaledHeight();
+        int ix = (sw - 7) / 2;
+        int iy = (sh - 7) / 2;
+        int[] main = levelColor(p.experienceLevel);
+        float prog = p.getAttackCooldownProgress(0.0f);
+        boolean target = mc.targetedEntity instanceof net.minecraft.entity.LivingEntity;
+        int ink = argb(255, lerp(main, WHITE, target && prog >= 1.0f ? 0.85f : 0.45f));
+        int dot = argb(255, target ? ORANGE : WHITE);
+        for (int pass = 0; pass < 2; pass++) {
+            int o = pass == 0 ? 1 : 0;
+            int c = pass == 0 ? 0x90000000 : ink;
+            ctx.fill(ix + 2 + o, iy + o, ix + 5 + o, iy + 1 + o, c);
+            ctx.fill(ix + 2 + o, iy + 6 + o, ix + 5 + o, iy + 7 + o, c);
+            ctx.fill(ix + o, iy + 2 + o, ix + 1 + o, iy + 5 + o, c);
+            ctx.fill(ix + 6 + o, iy + 2 + o, ix + 7 + o, iy + 5 + o, c);
+            ctx.fill(ix + 3 + o, iy + 3 + o, ix + 4 + o, iy + 4 + o, pass == 0 ? c : dot);
+        }
+        // Indikator serangan versi crosshair (hanya kalau opsi Attack Indicator = Crosshair).
+        if (mc.options.getAttackIndicator().getValue() == AttackIndicator.CROSSHAIR && prog < 1.0f) {
+            ctx.fill(ix - 1, iy + 10, ix + 8, iy + 12, 0x90000000);
+            int w = Math.max(1, (int) (prog * 9f));
+            ctx.fill(ix - 1, iy + 10, ix - 1 + w, iy + 12, argb(255, main));
         }
     }
 
