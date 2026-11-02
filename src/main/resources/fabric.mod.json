@@ -10,7 +10,7 @@
   "environment": "client",
   "entrypoints": {
     "client": ["dev.blackholexp.BlackHoleXpClient"],
-    "modmenu": ["dev.blackholexp.BlackHoleXpClient$ModMenuHook"]
+    "modmenu": ["dev.blackholexp.ModMenuHook"]
   },
   "depends": {
     "fabricloader": ">=0.16.0",
